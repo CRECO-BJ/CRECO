@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/creco/go-creco/common"
 	"github.com/creco/go-creco/mycreco/utils"
 	"github.com/creco/go-creco/node"
-	"github.com/go-ethereum/common"
+	"github.com/creco/go-creco/p2p/simulations"
+	"github.com/creco/go-creco/p2p/simulations/adapters"
 	cli "gopkg.in/urfave/cli.v1"
 )
 
@@ -15,6 +18,8 @@ var (
 		Usage: "TOML configuration file",
 	}
 )
+
+var client *simulations.Client
 
 var (
 	// Git SHA1 commit hash of the release (set via linker flags)
@@ -30,19 +35,53 @@ var (
 	}
 )
 
-func init() {
-	fmt.Println("init..")
+func main() {
+	client = simulations.NewClient("http://localhost:8888")
+	// cfg := gethConfig{
+	// 	//Eth:  eth.DefaultConfig,
+	// 	//Shh:  whisper.DefaultConfig,
+	// 	Node: defaultNodeConfig(),
+	// }
+	// stack, err := node.New(&cfg.Node)
+	// if err != nil {
+	// 	utils.Fatalf("Failed to create the protocol stack: %v", err)
+	// }
+	// utils.StartNode(stack)
+
+	nodeNmae := "node01"
+	// nodeKey := "key0"
+	config := &adapters.NodeConfig{
+		Name: nodeNmae,
+	}
+	// if key := nodeKey; key != "" {
+	// 	privKey, err := crypto.HexToECDSA(key)
+	// 	if err != nil {
+	// 		fmt.Println("something errror:", err)
+	// 	}
+	// 	config.ID = discover.PubkeyID(&privKey.PublicKey)
+	// 	config.PrivateKey = privKey
+	// }
+	if services := "createNode"; services != "" {
+		config.Services = strings.Split(services, ",")
+	}
+	node, err := client.CreateNode(config)
+	if err != nil {
+		fmt.Println("something errror:", err)
+		return
+	}
+	fmt.Println("Created", node.Name)
+
 }
 
 // geth is the main entry point into the system if no special subcommand is ran.
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
-func geth(ctx *cli.Context) error {
-	node := makeFullNode(ctx)
-	startNode(ctx, node)
-	node.Wait()
-	return nil
-}
+// func geth(ctx *cli.Context) error {
+// 	node := makeFullNode(ctx)
+// 	startNode(ctx, node)
+// 	node.Wait()
+// 	return nil
+// }
 
 // startNode boots up the system node and all registered protocols, after which
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
