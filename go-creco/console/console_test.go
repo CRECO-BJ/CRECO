@@ -26,11 +26,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/internal/jsre"
-	"github.com/ethereum/go-ethereum/node"
+	"github.com/creco/go-creco/common"
+	"github.com/creco/go-creco/core"
+	"github.com/creco/go-creco/eth"
+	"github.com/creco/go-creco/internal/jsre"
+	"github.com/creco/go-creco/node"
 )
 
 const (

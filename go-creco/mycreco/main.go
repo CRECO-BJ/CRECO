@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"strings"
+	"os"
 
 	"github.com/creco/go-creco/common"
 	"github.com/creco/go-creco/mycreco/utils"
@@ -36,7 +36,27 @@ var (
 )
 
 func main() {
+	app := cli.NewApp()
+	app.Usage = "devp2p simulation command-line client"
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:   "api",
+			Value:  "http://localhost:8888",
+			Usage:  "simulation API URL",
+			EnvVar: "P2PSIM_API_URL",
+		},
+	}
+	app.Before = func(ctx *cli.Context) error {
+		client = simulations.NewClient(ctx.GlobalString("api"))
+		return nil
+	}
+	app.Run(os.Args)
+
 	client = simulations.NewClient("http://localhost:8888")
+
+	network, err := client.GetNetwork()
+
+	fmt.Println("network:", network.ID)
 	// cfg := gethConfig{
 	// 	//Eth:  eth.DefaultConfig,
 	// 	//Shh:  whisper.DefaultConfig,
@@ -48,22 +68,10 @@ func main() {
 	// }
 	// utils.StartNode(stack)
 
-	nodeNmae := "node01"
-	// nodeKey := "key0"
 	config := &adapters.NodeConfig{
-		Name: nodeNmae,
+		Name: "node01",
 	}
-	// if key := nodeKey; key != "" {
-	// 	privKey, err := crypto.HexToECDSA(key)
-	// 	if err != nil {
-	// 		fmt.Println("something errror:", err)
-	// 	}
-	// 	config.ID = discover.PubkeyID(&privKey.PublicKey)
-	// 	config.PrivateKey = privKey
-	// }
-	if services := "createNode"; services != "" {
-		config.Services = strings.Split(services, ",")
-	}
+
 	node, err := client.CreateNode(config)
 	if err != nil {
 		fmt.Println("something errror:", err)
