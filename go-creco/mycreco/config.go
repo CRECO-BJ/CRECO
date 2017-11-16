@@ -10,7 +10,7 @@ import (
 
 	"github.com/creco/go-creco/mycreco/utils"
 	"github.com/creco/go-creco/node"
-	"github.com/go-ethereum/params"
+	"github.com/creco/go-creco/params"
 	"github.com/naoina/toml"
 	cli "gopkg.in/urfave/cli.v1"
 )
