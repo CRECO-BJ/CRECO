@@ -1,39 +1,44 @@
+// p4psim provides a command-line client for a simulation HTTP API.
+//
+// Here is an example of creating a 2 node network with the first node
+// connected to the second:
+//
+//     $ p2psim node create
+//     Created node01
+//
+//     $ p2psim node start node01
+//     Started node01
+//
+//     $ p2psim node create
+//     Created node3
+//
+//     $ p2psim node start node02
+//     Started node02
+//
+//     $ p2psim node connect node01 node02
+//     Connected node01 to node02
+//
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strings"
+	"text/tabwriter"
 
-	"github.com/creco/go-creco/common"
-	"github.com/creco/go-creco/mycreco/utils"
-	"github.com/creco/go-creco/node"
+	"github.com/creco/go-creco/crypto"
+	"github.com/creco/go-creco/p2p"
+	"github.com/creco/go-creco/p2p/discover"
 	"github.com/creco/go-creco/p2p/simulations"
 	"github.com/creco/go-creco/p2p/simulations/adapters"
-	cli "gopkg.in/urfave/cli.v1"
-)
-
-var (
-	configFileFlag = cli.StringFlag{
-		Name:  "config",
-		Usage: "TOML configuration file",
-	}
+	"github.com/creco/go-creco/rpc"
+	"gopkg.in/urfave/cli.v1"
 )
 
 var client *simulations.Client
-
-var (
-	// Git SHA1 commit hash of the release (set via linker flags)
-	gitCommit = ""
-
-	// Ethereum address of the Geth release oracle.
-	relOracle = common.HexToAddress("0xfa7b9770ca4cb04296cac84f37736d4041251cdf")
-	// The app that holds all commands and flags.
-	//app = utils.NewApp(gitCommit, "the go-ethereum command line interface")
-	// flags that configure the node
-	nodeFlags = []cli.Flag{
-		configFileFlag,
-	}
-)
 
 func main() {
 	app := cli.NewApp()
@@ -50,126 +55,368 @@ func main() {
 		client = simulations.NewClient(ctx.GlobalString("api"))
 		return nil
 	}
-	app.Run(os.Args)
 
-	client = simulations.NewClient("http://localhost:8888")
-
-	network, err := client.GetNetwork()
-
-	fmt.Println("network:", network.ID)
-	// cfg := gethConfig{
-	// 	//Eth:  eth.DefaultConfig,
-	// 	//Shh:  whisper.DefaultConfig,
-	// 	Node: defaultNodeConfig(),
-	// }
-	// stack, err := node.New(&cfg.Node)
-	// if err != nil {
-	// 	utils.Fatalf("Failed to create the protocol stack: %v", err)
-	// }
-	// utils.StartNode(stack)
-
-	config := &adapters.NodeConfig{
-		Name: "node01",
+	app.Commands = []cli.Command{
+		{
+			Name:   "show",
+			Usage:  "show network information",
+			Action: showNetwork,
+		},
+		{
+			Name:   "events",
+			Usage:  "stream network events",
+			Action: streamNetwork,
+			Flags: []cli.Flag{
+				cli.BoolFlag{
+					Name:  "current",
+					Usage: "get existing nodes and conns first",
+				},
+				cli.StringFlag{
+					Name:  "filter",
+					Value: "",
+					Usage: "message filter",
+				},
+			},
+		},
+		{
+			Name:   "snapshot",
+			Usage:  "create a network snapshot to stdout",
+			Action: createSnapshot,
+		},
+		{
+			Name:   "load",
+			Usage:  "load a network snapshot from stdin",
+			Action: loadSnapshot,
+		},
+		{
+			Name:   "node",
+			Usage:  "manage simulation nodes",
+			Action: listNodes,
+			Subcommands: []cli.Command{
+				{
+					Name:   "list",
+					Usage:  "list nodes",
+					Action: listNodes,
+				},
+				{
+					Name:   "create",
+					Usage:  "create a node",
+					Action: createNode,
+					Flags: []cli.Flag{
+						cli.StringFlag{
+							Name:  "name",
+							Value: "",
+							Usage: "node name",
+						},
+						cli.StringFlag{
+							Name:  "services",
+							Value: "",
+							Usage: "node services (comma separated)",
+						},
+						cli.StringFlag{
+							Name:  "key",
+							Value: "",
+							Usage: "node private key (hex encoded)",
+						},
+					},
+				},
+				{
+					Name:      "show",
+					ArgsUsage: "<node>",
+					Usage:     "show node information",
+					Action:    showNode,
+				},
+				{
+					Name:      "start",
+					ArgsUsage: "<node>",
+					Usage:     "start a node",
+					Action:    startNode,
+				},
+				{
+					Name:      "stop",
+					ArgsUsage: "<node>",
+					Usage:     "stop a node",
+					Action:    stopNode,
+				},
+				{
+					Name:      "connect",
+					ArgsUsage: "<node> <peer>",
+					Usage:     "connect a node to a peer node",
+					Action:    connectNode,
+				},
+				{
+					Name:      "disconnect",
+					ArgsUsage: "<node> <peer>",
+					Usage:     "disconnect a node from a peer node",
+					Action:    disconnectNode,
+				},
+				{
+					Name:      "rpc",
+					ArgsUsage: "<node> <method> [<args>]",
+					Usage:     "call a node RPC method",
+					Action:    rpcNode,
+					Flags: []cli.Flag{
+						cli.BoolFlag{
+							Name:  "subscribe",
+							Usage: "method is a subscription",
+						},
+					},
+				},
+			},
+		},
 	}
+	app.Run(os.Args)
+}
+
+func showNetwork(ctx *cli.Context) error {
+	if len(ctx.Args()) != 0 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	network, err := client.GetNetwork()
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(ctx.App.Writer, 1, 2, 2, ' ', 0)
+	defer w.Flush()
+	fmt.Fprintf(w, "NODES\t%d\n", len(network.Nodes))
+	fmt.Fprintf(w, "CONNS\t%d\n", len(network.Conns))
+	return nil
+}
+
+func streamNetwork(ctx *cli.Context) error {
+	if len(ctx.Args()) != 0 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	events := make(chan *simulations.Event)
+	sub, err := client.SubscribeNetwork(events, simulations.SubscribeOpts{
+		Current: ctx.Bool("current"),
+		Filter:  ctx.String("filter"),
+	})
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+	enc := json.NewEncoder(ctx.App.Writer)
+	for {
+		select {
+		case event := <-events:
+			if err := enc.Encode(event); err != nil {
+				return err
+			}
+		case err := <-sub.Err():
+			return err
+		}
+	}
+}
+
+func createSnapshot(ctx *cli.Context) error {
+	if len(ctx.Args()) != 0 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	snap, err := client.CreateSnapshot()
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(snap)
+}
+
+func loadSnapshot(ctx *cli.Context) error {
+	if len(ctx.Args()) != 0 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	snap := &simulations.Snapshot{}
+	if err := json.NewDecoder(os.Stdin).Decode(snap); err != nil {
+		return err
+	}
+	return client.LoadSnapshot(snap)
+}
+
+func listNodes(ctx *cli.Context) error {
+	if len(ctx.Args()) != 0 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	nodes, err := client.GetNodes()
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(ctx.App.Writer, 1, 2, 2, ' ', 0)
+	defer w.Flush()
+	fmt.Fprintf(w, "NAME\tPROTOCOLS\tID\n")
+	for _, node := range nodes {
+		fmt.Fprintf(w, "%s\t%s\t%s\n", node.Name, strings.Join(protocolList(node), ","), node.ID)
+	}
+	return nil
+}
+
+func protocolList(node *p2p.NodeInfo) []string {
+	protos := make([]string, 0, len(node.Protocols))
+	for name := range node.Protocols {
+		protos = append(protos, name)
+	}
+	return protos
+}
+
+func createNode(ctx *cli.Context) error {
+	if len(ctx.Args()) != 0 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	config := &adapters.NodeConfig{
+		Name: ctx.String("name"),
+	}
+
+	if key := ctx.String("key"); key != "" {
+		privKey, err := crypto.HexToECDSA(key)
+		if err != nil {
+			return err
+		}
+		config.ID = discover.PubkeyID(&privKey.PublicKey)
+		config.PrivateKey = privKey
+	}
+
+	if services := ctx.String("services"); services != "" {
+		config.Services = strings.Split(services, ",")
+	}
+	fmt.Println("services:", ctx.String("services"))
 
 	node, err := client.CreateNode(config)
 	if err != nil {
-		fmt.Println("something errror:", err)
-		return
+		fmt.Println("err:", err)
+		return err
 	}
-	fmt.Println("Created", node.Name)
-
+	fmt.Fprintln(ctx.App.Writer, "Created", node.Name)
+	return nil
 }
 
-// geth is the main entry point into the system if no special subcommand is ran.
-// It creates a default node based on the command line arguments and runs it in
-// blocking mode, waiting for it to be shut down.
-// func geth(ctx *cli.Context) error {
-// 	node := makeFullNode(ctx)
-// 	startNode(ctx, node)
-// 	node.Wait()
-// 	return nil
-// }
+func showNode(ctx *cli.Context) error {
+	args := ctx.Args()
+	if len(args) != 1 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	nodeName := args[0]
+	node, err := client.GetNode(nodeName)
+	if err != nil {
+		fmt.Println("err:", err)
+		return err
+	}
+	w := tabwriter.NewWriter(ctx.App.Writer, 1, 2, 2, ' ', 0)
+	defer w.Flush()
+	fmt.Fprintf(w, "NAME\t%s\n", node.Name)
+	fmt.Fprintf(w, "PROTOCOLS\t%s\n", strings.Join(protocolList(node), ","))
+	fmt.Fprintf(w, "ID\t%s\n", node.ID)
+	fmt.Fprintf(w, "ENODE\t%s\n", node.Enode)
+	for name, proto := range node.Protocols {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "--- PROTOCOL INFO: %s\n", name)
+		fmt.Fprintf(w, "%v\n", proto)
+		fmt.Fprintf(w, "---\n")
+	}
+	return nil
+}
 
-// startNode boots up the system node and all registered protocols, after which
-// it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
-// miner.
-func startNode(ctx *cli.Context, stack *node.Node) {
-	// Start up the node itself
-	utils.StartNode(stack)
+func startNode(ctx *cli.Context) error {
+	args := ctx.Args()
+	if len(args) != 1 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	nodeName := args[0]
+	if err := client.StartNode(nodeName); err != nil {
+		fmt.Println("err:", err)
+		return err
+	}
+	fmt.Fprintln(ctx.App.Writer, "Started", nodeName)
+	return nil
+}
 
-	// Unlock any account specifically requested
-	//ks := stack.AccountManager().Backends(keystore.KeyStoreType)[0].(*keystore.KeyStore)
+func stopNode(ctx *cli.Context) error {
+	args := ctx.Args()
+	if len(args) != 1 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	nodeName := args[0]
+	if err := client.StopNode(nodeName); err != nil {
+		return err
+	}
+	fmt.Fprintln(ctx.App.Writer, "Stopped", nodeName)
+	return nil
+}
 
-	//passwords := utils.MakePasswordList(ctx)
-	//unlocks := strings.Split(ctx.GlobalString(utils.UnlockedAccountFlag.Name), ",")
-	// for i, account := range unlocks {
-	// 	if trimmed := strings.TrimSpace(account); trimmed != "" {
-	// 		unlockAccount(ctx, ks, trimmed, i, passwords)
-	// 	}
-	// }
-	// Register wallet event handlers to open and auto-derive wallets
-	// events := make(chan accounts.WalletEvent, 16)
-	// stack.AccountManager().Subscribe(events)
+func connectNode(ctx *cli.Context) error {
+	args := ctx.Args()
+	if len(args) != 2 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	nodeName := args[0]
+	peerName := args[1]
+	if err := client.ConnectNode(nodeName, peerName); err != nil {
+		return err
+	}
+	fmt.Fprintln(ctx.App.Writer, "Connected", nodeName, "to", peerName)
+	return nil
+}
 
-	go func() {
-		fmt.Println("empty go...")
-		// Create an chain state reader for self-derivation
-		// rpcClient, err := stack.Attach()
-		// if err != nil {
-		// 	utils.Fatalf("Failed to attach to self: %v", err)
-		// }
-		//stateReader := ethclient.NewClient(rpcClient)
+func disconnectNode(ctx *cli.Context) error {
+	args := ctx.Args()
+	if len(args) != 2 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	nodeName := args[0]
+	peerName := args[1]
+	if err := client.DisconnectNode(nodeName, peerName); err != nil {
+		return err
+	}
+	fmt.Fprintln(ctx.App.Writer, "Disconnected", nodeName, "from", peerName)
+	return nil
+}
 
-		// Open any wallets already attached
-		// for _, wallet := range stack.AccountManager().Wallets() {
-		// 	if err := wallet.Open(""); err != nil {
-		// 		log.Warn("Failed to open wallet", "url", wallet.URL(), "err", err)
-		// 	}
-		// }
-		// Listen for wallet event till termination
-		// for event := range events {
-		// 	switch event.Kind {
-		// 	case accounts.WalletArrived:
-		// 		if err := event.Wallet.Open(""); err != nil {
-		// 			log.Warn("New wallet appeared, failed to open", "url", event.Wallet.URL(), "err", err)
-		// 		}
-		// 	case accounts.WalletOpened:
-		// 		status, _ := event.Wallet.Status()
-		// 		log.Info("New wallet appeared", "url", event.Wallet.URL(), "status", status)
-		//
-		// 		if event.Wallet.URL().Scheme == "ledger" {
-		// 			event.Wallet.SelfDerive(accounts.DefaultLedgerBaseDerivationPath, stateReader)
-		// 		} else {
-		// 			event.Wallet.SelfDerive(accounts.DefaultBaseDerivationPath, stateReader)
-		// 		}
-		//
-		// 	case accounts.WalletDropped:
-		// 		log.Info("Old wallet dropped", "url", event.Wallet.URL())
-		// 		event.Wallet.Close()
-		// 	}
-		// }
-	}()
-	// Start auxiliary services if enabled
-	// if ctx.GlobalBool(utils.MiningEnabledFlag.Name) || ctx.GlobalBool(utils.DeveloperFlag.Name) {
-	// 	// Mining only makes sense if a full Ethereum node is running
-	// 	var ethereum *eth.Ethereum
-	// 	if err := stack.Service(&ethereum); err != nil {
-	// 		utils.Fatalf("ethereum service not running: %v", err)
-	// 	}
-	// 	// Use a reduced number of threads if requested
-	// 	if threads := ctx.GlobalInt(utils.MinerThreadsFlag.Name); threads > 0 {
-	// 		type threaded interface {
-	// 			SetThreads(threads int)
-	// 		}
-	// 		if th, ok := ethereum.Engine().(threaded); ok {
-	// 			th.SetThreads(threads)
-	// 		}
-	// 	}
-	// 	// Set the gas price to the limits from the CLI and start mining
-	// 	ethereum.TxPool().SetGasPrice(utils.GlobalBig(ctx, utils.GasPriceFlag.Name))
-	// 	if err := ethereum.StartMining(true); err != nil {
-	// 		utils.Fatalf("Failed to start mining: %v", err)
-	// 	}
-	// }
+func rpcNode(ctx *cli.Context) error {
+	args := ctx.Args()
+	if len(args) < 2 {
+		return cli.ShowCommandHelp(ctx, ctx.Command.Name)
+	}
+	nodeName := args[0]
+	method := args[1]
+	rpcClient, err := client.RPCClient(context.Background(), nodeName)
+	if err != nil {
+		return err
+	}
+	if ctx.Bool("subscribe") {
+		return rpcSubscribe(rpcClient, ctx.App.Writer, method, args[3:]...)
+	}
+	var result interface{}
+	params := make([]interface{}, len(args[3:]))
+	for i, v := range args[3:] {
+		params[i] = v
+	}
+	if err := rpcClient.Call(&result, method, params...); err != nil {
+		return err
+	}
+	return json.NewEncoder(ctx.App.Writer).Encode(result)
+}
+
+func rpcSubscribe(client *rpc.Client, out io.Writer, method string, args ...string) error {
+	parts := strings.SplitN(method, "_", 2)
+	namespace := parts[0]
+	method = parts[1]
+	ch := make(chan interface{})
+	subArgs := make([]interface{}, len(args)+1)
+	subArgs[0] = method
+	for i, v := range args {
+		subArgs[i+1] = v
+	}
+	sub, err := client.Subscribe(context.Background(), namespace, ch, subArgs...)
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+	enc := json.NewEncoder(out)
+	for {
+		select {
+		case v := <-ch:
+			if err := enc.Encode(v); err != nil {
+				return err
+			}
+		case err := <-sub.Err():
+			return err
+		}
+	}
 }

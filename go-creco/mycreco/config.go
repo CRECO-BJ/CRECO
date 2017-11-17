@@ -17,6 +17,16 @@ import (
 
 const (
 	clientIdentifier = "geth" // Client identifier to advertise over the network
+
+)
+
+var (
+	configFileFlag = cli.StringFlag{
+		Name:  "config",
+		Usage: "TOML configuration file",
+	}
+
+	gitCommit = ""
 )
 
 // These settings ensure that TOML keys use the same names as Go struct fields.
