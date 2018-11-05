@@ -5,10 +5,18 @@ import (
 	"log"
 	"os"
 
+	"github.com/creco/node"
 	"github.com/urfave/cli"
 )
 
 func startBackend(c *cli.Context) error {
+	n, err := node.NewNode()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = n.Run(); err != nil {
+		log.Fatal(err)
+	}
 	return nil
 }
 

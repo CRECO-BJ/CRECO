@@ -5,6 +5,7 @@ import (
 )
 
 var test bool
+var genesis string
 
 var flags = []cli.Flag{
 	cli.BoolTFlag{
@@ -12,4 +13,9 @@ var flags = []cli.Flag{
 		Usage:       "only for test",
 		Destination: &test,
 	},
+	cli.StringFlag{
+		Name: "genesis",
+		Usage: "genesis block JSON file",
+		Destination: &genesis
+	}
 }
