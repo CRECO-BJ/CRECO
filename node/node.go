@@ -1,26 +1,28 @@
 package node
 
 import (
-	"io/ioutil"
+	"fmt"
 	"log"
-	"encoding/json"
-	"strings"
+	"os"
 	"path/filepath"
 
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/downloader"
-	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/les"
 	ethnode "github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/discv5"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/params"
 )
 
 const (
 	ropstenID = 3
-	kovanID = 42
+	kovanID   = 42
 	rinkebyID = 4
-	sokolID = 77
+	sokolID   = 77
 )
 
 var ropstenBootNodes = []string{
@@ -30,6 +32,7 @@ var ropstenBootNodes = []string{
 
 // Node ...
 type Node struct {
+	*ethnode.Node
 }
 
 // NewNode ...
@@ -40,7 +43,7 @@ func NewNode() (*Node, error) {
 		if url, err := discv5.ParseNode(boot); err == nil {
 			enodes = append(enodes, url)
 		} else {
-			log.Error("Failed to parse bootnode URL", "url", boot, "err", err)
+			log.Fatal("Failed to parse bootnode URL", "url", boot, "err", err)
 		}
 	}
 
@@ -65,33 +68,35 @@ func NewNode() (*Node, error) {
 	if err := stack.Register(func(ctx *ethnode.ServiceContext) (ethnode.Service, error) {
 		cfg := eth.DefaultConfig
 		cfg.SyncMode = downloader.LightSync
-		cfg.NetworkId = network
+		cfg.NetworkId = ropstenID
 		return les.New(ctx, &cfg)
 	}); err != nil {
 		return nil, err
 	}
 
-	return stack, nil
+	return &Node{stack}, nil
 }
 
 // Run ...
-func (n *Node) Run(stact *ethnode.Node, enodes []*discv5.Node) error {
+func (n *Node) Run() error {
 	// Assemble and start the faucet light service
 	// Boot up the client and ensure it connects to bootnodes
-	if err := stack.Start(); err != nil {
-		return nil, err
+	if err := n.Start(); err != nil {
+		return err
 	}
 	for _, boot := range ropstenBootNodes {
-		old, _ := discover.ParseNode(boot)
-		stack.Server().AddPeer(old)
+		old, err := enode.ParseV4(boot)
+		if err != nil {
+			n.Server().AddPeer(old)
+		}
 	}
 	// Attach to the client and retrieve and interesting metadatas
-	api, err := stack.Attach()
+	api, err := n.Attach()
 	if err != nil {
-		stack.Stop()
-		return nil, err
+		n.Stop()
+		return err
 	}
-	client := ethclient.NewClient(api)
+	ethclient.NewClient(api)
 
 	return nil
 }

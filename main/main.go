@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 
+	"github.com/creco/console"
 	"github.com/creco/node"
 	"github.com/urfave/cli"
 )
@@ -20,11 +20,20 @@ func startBackend(c *cli.Context) error {
 	return nil
 }
 
+func startConsole(c *cli.Context) error {
+	console.NewConsole()
+}
+
 func start(c *cli.Context) error {
 	if err := startBackend(c); err != nil {
+		log.Fatal(err)
 		return nil
 	}
-	fmt.Println("Started")
+
+	if err := startConsole(c); err != nil {
+		log.Fatal(err)
+		return nil
+	}
 	return nil
 }
 
@@ -32,6 +41,7 @@ func main() {
 	app := cli.NewApp()
 
 	app.Flags = flags
+	app.EnableBashCompletion = true
 	app.Commands = Commands
 	app.Action = start
 

@@ -14,8 +14,8 @@ var flags = []cli.Flag{
 		Destination: &test,
 	},
 	cli.StringFlag{
-		Name: "genesis",
-		Usage: "genesis block JSON file",
-		Destination: &genesis
-	}
+		Name:        "genesis",
+		Usage:       "genesis block JSON file",
+		Destination: &genesis,
+	},
 }
